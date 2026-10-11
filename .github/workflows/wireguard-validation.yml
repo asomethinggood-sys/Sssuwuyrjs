@@ -136,6 +136,12 @@ jobs:
               return (str(text).replace("%", "%25")
                       .replace("\r", " ").replace("\n", " ").strip())
 
+          def escape_title(text):
+              # A workflow-command title ends at the first comma, so an
+              # unescaped "Recovery, cleanup and leaks" is silently truncated
+              # to "Recovery".
+              return scrub(text).replace(",", "%2C").replace("=", "%3D")
+
           def emit(level, rows, label, limit=900):
               for check in rows:
                   message = "{} -- {}".format(
@@ -167,7 +173,8 @@ jobs:
                   "{}: {}".format(c["id"], scrub(c.get("detail", "")))
                   for c in sorted(rows, key=lambda c: c["id"])
               )
-              print("::notice title={}::{}".format(title, body[:4000] or "no passing checks"))
+              print("::notice title={}::{}".format(
+                  escape_title(title), body[:4000] or "no passing checks"))
 
           counts = {}
           for check in checks:

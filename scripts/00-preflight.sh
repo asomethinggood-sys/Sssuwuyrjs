@@ -149,12 +149,27 @@ PY
 
   wg_check_fn "PRE-01" "Operating system / kernel identified" \
     bash -c 'uname -s; uname -r'
+  # Each probe prints its own one-line proof: a silent success would leave the
+  # check with an empty detail and tell a reader nothing about what was proven.
   wg_check_fn "PRE-02" "Passwordless root/sudo available" \
-    bash -c 'if [[ $(id -u) -eq 0 ]] || sudo -n true 2>/dev/null; then exit 0; else exit 1; fi'
+    bash -c 'if [[ $(id -u) -eq 0 ]]; then
+               echo "already root (euid=0)"
+             elif sudo -n true 2>/dev/null; then
+               echo "sudo -n true succeeded as $(id -un) (euid=$(id -u)); root without an interactive prompt"
+             else
+               echo "neither root nor passwordless sudo"; exit 1
+             fi'
   wg_check_fn "PRE-03" "Kernel WireGuard interface can be created" \
-    bash -c "ip link add dev wgpf0 type wireguard && ip link del dev wgpf0"
+    bash -c 'ip link add dev wgpf0 type wireguard 2>/dev/null || {
+               echo "ip link add ... type wireguard failed: $(ip link add dev wgpf0 type wireguard 2>&1 | head -1)"
+               exit 1
+             }
+             echo "created wgpf0 type wireguard; kernel module $(basename "$(readlink -f /sys/module/wireguard 2>/dev/null || echo /sys/module/wireguard)") available"
+             ip link del dev wgpf0'  
   wg_check_fn "PRE-04" "Network namespaces supported" \
-    bash -c 'ip netns add wgpf-ns && ip netns del wgpf-ns'
+    bash -c 'ip netns add wgpf-ns 2>/dev/null || { echo "ip netns add failed: $(ip netns add wgpf-ns 2>&1 | head -1)"; exit 1; }
+             echo "created and destroyed network namespace wgpf-ns; netlink namespace support present"
+             ip netns del wgpf-ns'
   wg_check_fn "PRE-05" "Outbound UDP/53 reachable (egress works)" \
     python3 -c "
 import socket, sys
@@ -162,7 +177,9 @@ q = b'\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00'
 for l in ('example','com'): q += bytes([len(l)]) + l.encode()
 q += b'\x00\x00\x01\x00\x01'
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(5)
-s.sendto(q, ('1.1.1.1', 53)); d,_ = s.recvfrom(512); sys.exit(0 if len(d)>12 else 1)"
+s.sendto(q, ('1.1.1.1', 53)); d,_ = s.recvfrom(512)
+print(f\"UDP/53 to 1.1.1.1 answered with {len(d)} bytes\")
+sys.exit(0 if len(d)>12 else 1)"
   wg_check "PRE-06" PASS "Inbound reachability is NOT provisioned for GitHub-hosted runners" \
     "ephemeral Azure VM behind provider NAT; no static public IP on standard runners; verified against GitHub docs + /meta API"
 }
