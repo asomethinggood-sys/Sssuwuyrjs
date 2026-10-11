@@ -100,7 +100,8 @@ PY
     if (( egress_rc == 0 )) && [[ -n "$egress_out" ]]; then
       wg_check "CON-04" PASS "Internet egress through the tunnel (NAT on server role)" \
         "https://api.github.com/zen via wg0 -> ${egress_out}"
-      ns "$WG_CLI_NS" wg show wg0 transfer >"${DIAG_DIR}/egress-transfer.txt" 2>&1 || true
+      ns "$WG_CLI_NS" wg show wg0 transfer | wg_redact_leading_key \
+        >"${DIAG_DIR}/egress-transfer.txt" 2>&1 || true
     else
       wg_check "CON-04" UNTESTED "Internet egress through the tunnel (NAT on server role)" \
         "blocked or filtered in this environment (rc=$egress_rc); tunnel itself is unaffected"

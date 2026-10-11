@@ -1,0 +1,103 @@
+# =============================================================================
+# WireGuard CLIENT configuration - TEMPLATE
+# =============================================================================
+#
+# THIS IS NOT A WORKING CONFIGURATION.
+#
+# Every {{DOUBLE_BRACE}} value is an unfilled placeholder. A WireGuard client
+# will accept this file and then silently fail to connect, because the keys and
+# the endpoint are not real. Fill in every value below before importing it.
+#
+# It is a template rather than a ready-made file for two honest reasons:
+#
+#   1. The server endpoint address can only exist once you run the server on a
+#      host you control. A GitHub-hosted runner cannot supply one: it is an
+#      ephemeral VM behind provider NAT with no inbound reachability and no
+#      stable public address. See WireGuard-feasibility.md.
+#   2. The private key must be generated ON THE CLIENT DEVICE and never travel.
+#      Generating it elsewhere and shipping it defeats the point of the key.
+#
+# Valid syntax check:  python3 validate_config.py --client wg-client.conf --allow-placeholders
+# Render from values:  scripts/render-config.sh --template ... --values values.json
+#                      --out wg-client.conf     (refuses unresolved placeholders)
+# =============================================================================
+#
+# FIELDS THAT ARE THIS CLIENT'S OWN - change them per device
+# -----------------------------------------------------------------------------
+# Address     = {{CLIENT_TUNNEL_IP}}/32
+#   The client's address INSIDE the tunnel. Do not use the server's public IP
+#   here. A /32 means "only this one address". This value must appear in the
+#   server's [Peer] AllowedIPs entry for this client, or the server will drop
+#   the client's packets.
+#
+# PrivateKey  = {{CLIENT_PRIVATE_KEY}}
+#   Generated on this device:  wg genkey > client.key ; wg pubkey < client.key
+#   The PRIVATE half stays here. Only the public half goes to the server.
+#
+# DNS         = {{TUNNEL_DNS}}
+#   Resolver used while the tunnel is up. Use an address reachable THROUGH the
+#   tunnel (normally the server's tunnel IP). A public resolver here proves
+#   nothing about the tunnel and leaks queries outside it.
+#
+# MTU         = {{TUNNEL_MTU}}
+#   1420 is the safe default (1500 minus WireGuard's overhead). Lower it to
+#   ~1380 if large packets stall behind PPPoE or double NAT.
+#
+# FIELDS THAT DESCRIBE THE SERVER - identical on every client
+# -----------------------------------------------------------------------------
+# PublicKey   = {{SERVER_PUBLIC_KEY}}
+#   Output of `wg pubkey < /etc/wireguard/wg0.key` on the SERVER.
+#
+# PresharedKey = {{PRESHARED_KEY}}
+#   Optional but recommended: adds a symmetric key to the handshake. Must be
+#   BYTE-IDENTICAL on both ends. A mismatch fails closed - no handshake, no
+#   traffic, and no error message anywhere. Generate with `wg genpsk`.
+#
+# Endpoint    = {{SERVER_ENDPOINT_HOST}}:{{SERVER_ENDPOINT_PORT}}
+#   A stable hostname or IP that answers on that UDP port. WireGuard is UDP
+#   only; there is no TCP fallback. If the server's address changes, every
+#   client breaks - no client-side setting survives that.
+#
+# AllowedIPs  = {{CLIENT_ALLOWED_IPS}}
+#   WHICH DESTINATIONS GO INTO THE TUNNEL. This is a routing decision, not a
+#   firewall rule: an address not listed here is routed OUTSIDE the tunnel, not
+#   blocked.
+#     0.0.0.0/0            full tunnel (all IPv4 traffic encrypted)
+#     10.13.13.0/24        split tunnel - only the VPN subnet
+#
+# PersistentKeepalive = {{CLIENT_PERSISTENT_KEEPALIVE}}
+#   25 keeps this client's NAT mapping open so the server can reach it. Use 25
+#   if the client is behind NAT; 0 otherwise. It does NOT fix an unreachable
+#   server; it only keeps a reachable path alive.
+# =============================================================================
+
+[Interface]
+Address    = {{CLIENT_TUNNEL_IP}}/32
+PrivateKey = {{CLIENT_PRIVATE_KEY}}
+DNS        = {{TUNNEL_DNS}}
+MTU        = {{TUNNEL_MTU}}
+
+[Peer]
+PublicKey           = {{SERVER_PUBLIC_KEY}}
+PresharedKey        = {{PRESHARED_KEY}}
+Endpoint            = {{SERVER_ENDPOINT_HOST}}:{{SERVER_ENDPOINT_PORT}}
+AllowedIPs          = {{CLIENT_ALLOWED_IPS}}
+PersistentKeepalive = {{CLIENT_PERSISTENT_KEEPALIVE}}
+
+# =============================================================================
+# Import instructions (use an authorised WireGuard client)
+# -----------------------------------------------------------------------------
+# Linux / NetworkManager   nmcli connection import type wireguard file wg-client.conf
+# Linux / wg-quick         cp wg-client.conf /etc/wireguard/wg0.conf
+#                          sudo wg-quick up wg0
+# Android / iOS            WireGuard app -> Add tunnel -> Import from file
+# Windows / macOS          WireGuard client -> Import tunnel(s) from file
+#
+# Then verify - a completed handshake is the only proof:
+#   sudo wg show
+#     "latest handshake: N seconds ago" with non-zero transfer counters
+#
+# If it says "latest handshake: (never)" and the counters are 0, see the
+# troubleshooting section of WireGuard-deployment-guide.md. In order of
+# likelihood: a key mismatch, a blocked UDP port, or a placeholder you missed.
+# =============================================================================

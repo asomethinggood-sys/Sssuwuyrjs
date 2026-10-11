@@ -24,12 +24,20 @@ audit_path() {
   # Provenance pass: the harness knows exactly which keys it generated, so a
   # verbatim copy of one of them is a leak no heuristic can explain away.
   [[ -d "${WG_STATE_DIR}/keys" ]] && extra+=(--secrets-from "${WG_STATE_DIR}/keys")
-  if python3 "${SCRIPT_DIR}/secret_scan.py" "$path" "${extra[@]+"${extra[@]}"}"; then
+  local scan_out scan_rc=0
+  scan_out="$(python3 "${SCRIPT_DIR}/secret_scan.py" "$path" "${extra[@]+"${extra[@]}"}" 2>&1)" || scan_rc=$?
+  if (( scan_rc == 0 )); then
     wg_check "$check_id" PASS "Secret scan: $label" "no private/preshared key material detected"
-  else
-    wg_check "$check_id" FAIL "Secret scan: $label" "secret material detected - see errors above"
-    return 1
+    return 0
   fi
+  # The detail is what a reader sees on the check run when the job log is not
+  # available, so the finding itself has to be in it - not just "see above".
+  local summary
+  summary="$(printf '%s' "$scan_out" | grep -E '^LEAK ' | head -3 | tr '\n' '; ')"
+  [[ -n "$summary" ]] || summary="$(printf '%s' "$scan_out" | tail -2 | tr '\n' ' ')"
+  wg_check "$check_id" FAIL "Secret scan: $label" "${summary:-scanner exited with rc=$scan_rc}"
+  wg_err "$scan_out"
+  return 1
 }
 
 main() {

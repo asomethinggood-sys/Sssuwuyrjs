@@ -133,6 +133,26 @@ main() {
     exit 1
   fi
 
+  # --- 5b. the distributed template must be well formed and must not pass as live
+  local tpl="${REPO_ROOT}/deliverables/wg-client.conf.template"
+  if [[ -f "$tpl" ]]; then
+    local tpl_ok=1
+    python3 "${SCRIPT_DIR}/validate_config.py" --client "$tpl" --allow-placeholders \
+      >/dev/null 2>&1 || tpl_ok=0
+    if python3 "${SCRIPT_DIR}/validate_config.py" --client "$tpl" >/dev/null 2>&1; then
+      tpl_ok=0   # a template must never validate as a live configuration
+    fi
+    if (( tpl_ok == 1 )); then
+      wg_check "CFG-08" PASS "Distributed client template is well formed and not deployable" \
+        "valid with --allow-placeholders, rejected as a live config"
+    else
+      wg_check "CFG-08" FAIL "Distributed client template is well formed and not deployable" \
+        "template validation gave the wrong answer; see logs"
+    fi
+  else
+    wg_check "CFG-08" UNTESTED "Distributed client template is well formed" "no template shipped"
+  fi
+
   # --- 6. file permissions -------------------------------------------------
   local bad=0 m
   for f in "${CONF_DIR}/server.conf" "${CONF_DIR}/client.conf" "$VALUES"; do

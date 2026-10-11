@@ -100,6 +100,17 @@ def parse(text: str) -> list[Section]:
     return sections
 
 
+def _placeholder(value: str, allow_placeholders: bool) -> bool:
+    """True when *value* is an unfilled placeholder that may be skipped.
+
+    Shape checks exist to catch a mistake in a value the author meant to write.
+    They must not fire on a value the author deliberately left for the renderer,
+    or no template could ever be validated - which would leave "this template is
+    well formed" as an unverifiable claim.
+    """
+    return allow_placeholders and bool(PLACEHOLDER_RE.search(value))
+
+
 def check(role: str, sections: list[Section], *, allow_placeholders: bool, strict: bool = True) -> list[str]:
     problems: list[str] = []
     interfaces = [s for s in sections if s.kind == "interface"]
@@ -131,11 +142,16 @@ def check(role: str, sections: list[Section], *, allow_placeholders: bool, stric
                 problems.append(f"[{role}] [Interface] is missing {key.capitalize()}")
         if "address" in section.values:
             for addr in _split(section.values["address"]):
+                if _placeholder(addr, allow_placeholders):
+                    continue
                 try:
                     ipaddress.ip_interface(addr)
                 except ValueError as exc:
                     problems.append(f"[{role}] invalid Address {addr!r}: {exc}")
-        if "mtu" in section.values:
+        if "mtu" not in section.values:
+            if strict:
+                problems.append(f"[{role}] [Interface] has no MTU (fragmentation risk on NAT paths)")
+        elif not _placeholder(section.values["mtu"], allow_placeholders):
             try:
                 mtu = int(section.values["mtu"])
             except ValueError:
@@ -143,8 +159,6 @@ def check(role: str, sections: list[Section], *, allow_placeholders: bool, stric
             else:
                 if not 576 <= mtu <= 1500:
                     problems.append(f"[{role}] MTU {mtu} outside sane range 576..1500")
-        elif strict:
-            problems.append(f"[{role}] [Interface] has no MTU (fragmentation risk on NAT paths)")
 
     for idx, peer in enumerate(peers, start=1):
         label = f"[{role}] peer#{idx}"
@@ -158,6 +172,8 @@ def check(role: str, sections: list[Section], *, allow_placeholders: bool, stric
             problems.append(f"{label} missing AllowedIPs")
         else:
             for net in _split(peer.values["allowedips"]):
+                if _placeholder(net, allow_placeholders):
+                    continue
                 try:
                     ipaddress.ip_network(net, strict=False)
                 except ValueError as exc:
@@ -165,8 +181,10 @@ def check(role: str, sections: list[Section], *, allow_placeholders: bool, stric
         if role == "client":
             if "endpoint" not in peer.values:
                 problems.append(f"{label} missing Endpoint (client needs a reachable server)")
+            elif _placeholder(peer.values["endpoint"], allow_placeholders):
+                pass  # explicitly tolerated: the author has not chosen an endpoint yet
             else:
-                if not allow_placeholders and PLACEHOLDER_RE.search(peer.values["endpoint"]):
+                if PLACEHOLDER_RE.search(peer.values["endpoint"]):
                     problems.append(f"{label} Endpoint still contains a placeholder")
                 _check_endpoint(peer.values["endpoint"], problems, label)
             if "presharedkey" not in peer.values and strict:
@@ -175,7 +193,9 @@ def check(role: str, sections: list[Section], *, allow_placeholders: bool, stric
             value = peer.values["presharedkey"]
             if not allow_placeholders and not KEY_RE.match(value):
                 problems.append(f"{label} PresharedKey is not a valid 32-byte base64 key")
-        if "persistentkeepalive" in peer.values:
+        if "persistentkeepalive" in peer.values and not _placeholder(
+            peer.values["persistentkeepalive"], allow_placeholders
+        ):
             try:
                 ka = int(peer.values["persistentkeepalive"])
             except ValueError:
@@ -242,7 +262,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--expect-port")
     ap.add_argument("--expect-srv-ip")
     ap.add_argument("--expect-cli-ip")
-    ap.add_argument("--allow-placeholders", action="store_true")
+    ap.add_argument("--allow-placeholders", action="store_true",
+                    help="validate a template: skip value-shape checks for values that "
+                         "contain an unfilled <PLACEHOLDER> or {{placeholder}}. Structure "
+                         "(sections, known keys, required keys) is still enforced.")
     ap.add_argument("--lenient", action="store_true", help="downgrade recommended-only findings")
     args = ap.parse_args(argv)
 

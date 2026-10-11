@@ -345,6 +345,27 @@ expect_rc 0 "--exclude skips the named subtree" -- \
   python3 "$REPO_ROOT/scripts/secret_scan.py" "$WORK/partial" --exclude "$WORK/partial/skip-me.conf"
 
 # ---------------------------------------------------------------------------
+section "shipped template"
+# ---------------------------------------------------------------------------
+# The distributed client template must be provably well formed *and* provably
+# not usable as a live configuration. Without --allow-placeholders it must fail,
+# otherwise a template could be mistaken for a deployable config.
+TEMPLATE="$REPO_ROOT/deliverables/wg-client.conf.template"
+if [[ -f "$TEMPLATE" ]]; then
+  expect_rc 0 "the shipped client template is structurally valid" -- \
+    python3 "$REPO_ROOT/scripts/validate_config.py" --client "$TEMPLATE" --allow-placeholders
+  expect_rc 1 "the shipped client template is rejected as a live config" -- \
+    python3 "$REPO_ROOT/scripts/validate_config.py" --client "$TEMPLATE"
+  if grep -q '{{' "$TEMPLATE"; then
+    ok "the shipped client template contains unresolved placeholders"
+  else
+    not_ok "the shipped client template contains unresolved placeholders"
+  fi
+else
+  not_ok "the shipped client template exists"
+fi
+
+# ---------------------------------------------------------------------------
 section "templates"
 # ---------------------------------------------------------------------------
 if command -v grep >/dev/null 2>&1; then

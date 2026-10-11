@@ -237,6 +237,16 @@ wg_setup_nat() {
   wg_log "NAT/forwarding enabled (WAN=$wan) so egress tests can run"
 }
 
+# Redact a leading key column, for `wg show <iface> transfer` and friends.
+# The value replaced is a *public* key, but the repository rule is stricter than
+# the protocol: no artifact carries a bare key token, so that the leak audit can
+# treat any unlabelled key-shaped string as suspicious and still stay quiet.
+wg_redact_leading_key() {
+  awk -F'\t' 'BEGIN { OFS="\t" }
+    $1 ~ /^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$/ { $1 = "<peer-public-key>" }
+    { print }'
+}
+
 # Assert a path contains no WireGuard secret material.
 #
 # Uses scripts/secret_scan.py, which distinguishes public keys (not secrets)
