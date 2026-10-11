@@ -31,7 +31,7 @@ The short version of what this repository is:
 | Signal | Where it comes from | Result |
 |---|---|---|
 | Harness checks | `ubuntu-22.04` + `ubuntu-24.04` matrix, workflow *WireGuard validation* | **58 / 58 PASS** on both legs |
-| Unit tests | `bash tests/run-unit-tests.sh` | **45 passed, 0 failed** |
+| Unit tests | `bash tests/run-unit-tests.sh` | **47 passed, 0 failed** |
 | Workflow policy tests | `bash tests/check-workflows.sh` | **10 passed, 0 failed** |
 | Static analysis | ShellCheck, `python -m compileall` + AST, `yamllint` | clean |
 
