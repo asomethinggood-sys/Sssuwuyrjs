@@ -98,32 +98,40 @@ jobs:
 
       # Surface the per-check outcome on the commit/PR check run. GitHub renders
       # these as annotations, so a reviewer sees exactly which check failed
-      # without downloading the artifact.
+      # without downloading the artifact. Written in Python rather than jq to
+      # avoid shell-quoting traps in the jq program.
       - name: Publish check results as annotations
         if: always()
         run: |
-          ndjson=artifacts/checks.ndjson
-          if [[ ! -f "$ndjson" ]]; then
-            echo "::warning title=No check log::The harness did not produce artifacts/checks.ndjson"
-            exit 0
-          fi
+          python3 - <<'PY'
+          import json
+          import pathlib
 
-          emit() {
-            local level="$1" filter="$2" label="$3"
-            jq -r "$filter | \(.id)\t\(.description)\t\(.detail // \"\")" "$ndjson" |
-              while IFS=$'\t' read -r id desc detail; do
-                [[ -n "$id" ]] || continue
-                clean=$(printf '%s -- %s' "$desc" "$detail" | tr '\n\r' '  ' | tr -d '%' | cut -c1-600)
-                echo "::${level} title=${id} ${label}::${clean}"
-              done
-          }
+          ndjson = pathlib.Path("artifacts/checks.ndjson")
+          if not ndjson.is_file():
+              print("::warning title=No check log::The harness produced no artifacts/checks.ndjson")
+              raise SystemExit(0)
 
-          emit error 'select(.status=="FAIL")' "failed"
-          emit warning 'select(.status=="UNTESTED" or .status=="SKIP")' "did not execute"
+          checks = [json.loads(line) for line in ndjson.read_text().splitlines() if line.strip()]
 
-          echo "--- summary ---"
-          jq -r '"checks=\(.summary.total) pass=\(.summary.passed) fail=\(.summary.failed) skip=\(.summary.skipped) untested=\(.summary.untested)"' \
-            artifacts/test-report.json 2>/dev/null || echo "summary unavailable"
+          def emit(level, rows, label):
+              for check in rows:
+                  message = "{} -- {}".format(
+                      check.get("description", ""), check.get("detail", "")
+                  )
+                  message = message.replace("\n", " ").replace("\r", " ").replace("%", "")
+                  print("::{} title={} {}::{}".format(level, check.get("id", "?"), label, message[:600]))
+
+          emit("error", [c for c in checks if c["status"] == "FAIL"], "failed")
+          emit("warning", [c for c in checks if c["status"] in ("UNTESTED", "SKIP")], "did not execute")
+
+          counts = {}
+          for check in checks:
+              counts[check["status"]] = counts.get(check["status"], 0) + 1
+          print("::notice title=Harness summary::" + " ".join(
+              "{}={}".format(k, counts[k]) for k in sorted(counts)
+          ) or "::notice title=Harness summary::no checks recorded")
+          PY
 
       # The harness records a per-check report and exits non-zero when any check
       # failed. Refuse to let a red run look green after artifacts are uploaded.
