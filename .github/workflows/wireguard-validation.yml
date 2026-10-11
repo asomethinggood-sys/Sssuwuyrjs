@@ -98,39 +98,82 @@ jobs:
 
       # Surface the per-check outcome on the commit/PR check run. GitHub renders
       # these as annotations, so a reviewer sees exactly which check failed
-      # without downloading the artifact. Written in Python rather than jq to
-      # avoid shell-quoting traps in the jq program.
+      # without downloading the artifact. Grouped into a handful of notices
+      # because GitHub throttles annotations per step.
+      #
+      # This is also the only machine-readable channel available when the job
+      # log and the artifact store are unreachable from the network you are
+      # reading the run from: `gh api .../check-runs/<id>/annotations` works.
       - name: Publish check results as annotations
         if: always()
         run: |
           python3 - <<'PY'
           import json
           import pathlib
+          import platform
 
           ndjson = pathlib.Path("artifacts/checks.ndjson")
+          facts = pathlib.Path("artifacts/runner-facts.txt")
+          if facts.is_file():
+              flat = " ".join(
+                  line.replace("\n", "") for line in facts.read_text().splitlines()
+              )
+              print("::notice title=Runner::" + flat[:900])
+          else:
+              print("::notice title=Runner::facts file missing")
+
           if not ndjson.is_file():
               print("::warning title=No check log::The harness produced no artifacts/checks.ndjson")
               raise SystemExit(0)
 
           checks = [json.loads(line) for line in ndjson.read_text().splitlines() if line.strip()]
+          by_id = {c.get("id", "?"): c for c in checks}
 
-          def emit(level, rows, label):
+          def scrub(text):
+              # Workflow commands need % and CR/LF escaped, not deleted; dropping
+              # the percent sign silently turned "0% packet loss" into "0 packet
+              # loss" in the evidence digest.
+              return (str(text).replace("%", "%25")
+                      .replace("\r", " ").replace("\n", " ").strip())
+
+          def emit(level, rows, label, limit=900):
               for check in rows:
                   message = "{} -- {}".format(
                       check.get("description", ""), check.get("detail", "")
                   )
-                  message = message.replace("\n", " ").replace("\r", " ").replace("%", "")
-                  print("::{} title={} {}::{}".format(level, check.get("id", "?"), label, message[:600]))
+                  print("::{} title={} {}::{}".format(
+                      level, check.get("id", "?"), label, scrub(message)[:limit]))
 
+          # Anything that did not pass is reported individually and prominently.
           emit("error", [c for c in checks if c["status"] == "FAIL"], "failed")
           emit("warning", [c for c in checks if c["status"] in ("UNTESTED", "SKIP")], "did not execute")
+
+          # Evidence digest: grouped so the annotation count stays small while
+          # every observed fact remains readable from the API.
+          groups = [
+              ("Platform", ("PRE-", "DEP-")),
+              ("Keys and configuration", ("KEY-", "CFG-")),
+              ("Tunnel and handshake", ("TUN-", "HS-")),
+              ("Routing and DNS", ("RT-", "DNS-")),
+              ("Connectivity", ("CON-",)),
+              ("Recovery, cleanup and leaks", ("REC-", "CLN-", "SEC-")),
+          ]
+          for title, prefixes in groups:
+              rows = [c for c in checks if c["status"] == "PASS"
+                      and c.get("id", "").startswith(prefixes)]
+              if not rows:
+                  continue
+              body = " | ".join(
+                  "{}: {}".format(c["id"], scrub(c.get("detail", "")))
+                  for c in sorted(rows, key=lambda c: c["id"])
+              )
+              print("::notice title={}::{}".format(title, body[:4000] or "no passing checks"))
 
           counts = {}
           for check in checks:
               counts[check["status"]] = counts.get(check["status"], 0) + 1
-          print("::notice title=Harness summary::" + " ".join(
-              "{}={}".format(k, counts[k]) for k in sorted(counts)
-          ) or "::notice title=Harness summary::no checks recorded")
+          summary = " ".join("{}={}".format(k, counts[k]) for k in sorted(counts))
+          print("::notice title=Harness summary::{} ({} checks)".format(summary, len(checks)))
           PY
 
       # The harness records a per-check report and exits non-zero when any check
