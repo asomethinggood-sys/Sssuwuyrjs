@@ -393,6 +393,51 @@ if command -v grep >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
+section "delivery bundle"
+# ---------------------------------------------------------------------------
+# The flat bundle under deliverables/ is what gets handed over, but the canonical
+# text lives in docs/. Copies drift the moment one side is edited, and a stale
+# security review is worse than no security review, so the two are compared here.
+bundle_ok=1
+while read -r src dst; do
+  [[ -n "$src" ]] || continue
+  if ! cmp -s "$REPO_ROOT/$src" "$REPO_ROOT/$dst"; then
+    bundle_ok=0
+    printf '       drift: %s != %s\n' "$src" "$dst"
+  fi
+done <<'EOF'
+docs/TEST-REPORT.md deliverables/WireGuard-test-report.md
+docs/SECURITY.md deliverables/WireGuard-security-review.md
+docs/FEASIBILITY.md deliverables/WireGuard-feasibility.md
+docs/DEPLOYMENT.md deliverables/WireGuard-deployment-guide.md
+EOF
+if (( bundle_ok == 1 )); then
+  ok "the delivery bundle matches its source documents byte for byte"
+else
+  not_ok "the delivery bundle matches its source documents byte for byte"
+fi
+
+# Every file named in the bundle index must exist, or the index is fiction.
+index_ok=1
+missing=""
+if [[ -f "$REPO_ROOT/deliverables/README-FIRST.md" ]]; then
+  while read -r name; do
+    [[ -n "$name" ]] || continue
+    if [[ ! -e "$REPO_ROOT/deliverables/$name" ]]; then
+      index_ok=0
+      missing+=" $name"
+    fi
+  done < <(grep -oE '`[A-Za-z0-9._-]+\.(md|template)`' "$REPO_ROOT/deliverables/README-FIRST.md" | tr -d '`')
+  if (( index_ok == 1 )); then
+    ok "every file named in the bundle index exists"
+  else
+    not_ok "every file named in the bundle index exists (missing:$missing)"
+  fi
+else
+  not_ok "the bundle index exists"
+fi
+
+# ---------------------------------------------------------------------------
 printf '\n---------------------------------------------\n'
 printf 'unit tests: %d passed, %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))
