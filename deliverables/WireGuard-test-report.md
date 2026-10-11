@@ -11,16 +11,17 @@ value was read from the kernel**.
 
 | Run | Where | When (UTC) | Result |
 |---|---|---|---|
-| CI harness, `ubuntu-24.04` | GitHub-hosted runner, kernel `6.17.0-1022-azure`, image `ubuntu24-20261004.327.1` | 2026-10-11 12:02:01 – 12:02:56 | **PASS 58, FAIL 0, UNTESTED 0, SKIP 0** |
-| CI harness, `ubuntu-22.04` | GitHub-hosted runner, kernel `6.8.0-1064-azure`, image `ubuntu22-20261004.315.1` | 2026-10-11 12:02:02 – 12:02:58 | **PASS 58, FAIL 0, UNTESTED 0, SKIP 0** |
+| CI harness, `ubuntu-24.04` | GitHub-hosted runner, kernel `6.17.0-1022-azure`, image `ubuntu24-20261004.327.1` | 2026-10-11 12:04:51 – 12:05:45 | **PASS 58, FAIL 0, UNTESTED 0, SKIP 0** |
+| CI harness, `ubuntu-22.04` | GitHub-hosted runner, kernel `6.8.0-1064-azure`, image `ubuntu22-20261004.315.1` | 2026-10-11 12:04:50 – 12:05:48 | **PASS 58, FAIL 0, UNTESTED 0, SKIP 0** |
 | Static analysis | GitHub-hosted runner | 2026-10-11 12:02 | success (ShellCheck, `compileall` + AST, yamllint, 47 unit tests, 10 workflow policy tests) |
 | Local harness | Development sandbox, kernel `6.1.158+`, 2 CPUs | 2026-10-11 11:56 | PASS 51, FAIL 1, UNTESTED 5, SKIP 1 — the single FAIL and all five UNTESTED cases are sandbox limitations, itemised in §5 |
 
-Workflow runs: *WireGuard validation* `38137734106`, *WireGuard static analysis*
-`38137734140`, both on commit `1f1b180`. Evidence is reproduced from the check-run
-annotations of that run and from `artifacts/checks.ndjson` in the job artifacts.
-The previous green pair, `38137396217` / `38137396260` on `2bd00ff`, produced the same
-58 PASS on both legs.
+Workflow runs: *WireGuard validation* `38137908799`, *WireGuard static analysis*
+`38137908756`, both on commit `c48b56e`. Evidence is reproduced from the check-run
+annotations of that run and from `artifacts/checks.ndjson` in the job artifacts. Every
+commit from `2bd00ff` onward has produced the same 58 PASS on both legs
+(`38137396217` on `2bd00ff`, `38137734106` on `1f1b180`), so this is a reproduced
+result and not a lucky run.
 
 Early CI runs failed and were the most valuable runs of the project — §4 lists what
 they caught.
@@ -48,8 +49,8 @@ The central claim of this project is that the configuration and data path work. 
 observation behind it, copied verbatim from the check record:
 
 ```
-HS-01  latest-handshakes=1791720140 (2026-10-11T12:02:20Z), waited 0s     [ubuntu-24.04]
-HS-01  latest-handshakes=1791720138 (2026-10-11T12:02:18Z), waited 0s     [ubuntu-22.04]
+HS-01  latest-handshakes=1791720307 (2026-10-11T12:05:07Z), waited 0s     [ubuntu-24.04]
+HS-01  latest-handshakes=1791720306 (2026-10-11T12:05:06Z), waited 0s     [ubuntu-22.04]
 HS-02  latest-handshakes=<same value read independently on the peer>
 HS-03  client rx=220B tx=308B         <- encrypted transport, not just negotiation
 ```
