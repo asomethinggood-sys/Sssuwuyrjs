@@ -1,0 +1,105 @@
+# WireGuard harness - end-to-end validation on GitHub-hosted runners.
+#
+# SCOPE AND HONEST LIMITS (read docs/FEASIBILITY.md before changing this file)
+# ---------------------------------------------------------------------------
+# This workflow *tests* a WireGuard implementation. It does NOT operate a VPN
+# service and never exposes an endpoint to the internet. GitHub-hosted runners
+# are ephemeral VMs behind provider NAT with no inbound reachability and no
+# stable public address, so a runner can never be the server half of a VPN.
+# Using Actions as a hosted tunnel endpoint would also breach the GitHub Terms
+# for Additional Products and Features ("any other activity unrelated to the
+# production, testing, deployment, or publication of the software project
+# associated with the repository where GitHub Actions are used").
+#
+# What this workflow does instead: it builds a hermetic two-namespace testbed
+# on the runner, negotiates a real WireGuard handshake over real UDP, verifies
+# routing, DNS, ICMP/UDP/TCP and MTU behaviour, injects failures to prove the
+# recovery paths work, destroys all key material, and scans every publishable
+# surface for leaks.
+name: WireGuard validation
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      diagnostic_verbosity:
+        description: "Harness log verbosity"
+        type: choice
+        options: ["normal", "verbose"]
+        default: "normal"
+
+# Least privilege: nothing here needs to write to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: wireguard-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  harness:
+    name: Harness (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      # One leg per supported Ubuntu LTS: a kernel-specific regression (missing
+      # wireguard module, different netlink behaviour) must be caught, not assumed.
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    env:
+      WG_DEBUG: ${{ github.event.inputs.diagnostic_verbosity == 'verbose' && '1' || '0' }}
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Record runner facts
+        run: |
+          {
+            echo "runner_os=$RUNNER_OS"
+            echo "runner_arch=$RUNNER_ARCH"
+            echo "image=$ImageOS"
+            echo "image_version=$ImageVersion"
+            echo "kernel=$(uname -r)"
+            echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } | tee runner-facts.txt
+
+      - name: Run the WireGuard harness
+        id: harness
+        run: |
+          set -o pipefail
+          sudo -E env \
+            WG_ARTIFACT_DIR="$GITHUB_WORKSPACE/artifacts" \
+            WG_STATE_DIR=/run/wg-harness \
+            PATH="$PATH" \
+            bash scripts/run-suite.sh
+
+      # The harness runs as root; the artifact uploader does not.
+      - name: Normalise artifact ownership and permissions
+        if: always()
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" artifacts 2>/dev/null || true
+          chmod -R u+rwX,go+rX artifacts 2>/dev/null || true
+          mkdir -p artifacts && mv runner-facts.txt artifacts/ 2>/dev/null || true
+
+      - name: Upload the test report and diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: wireguard-test-report-${{ matrix.os }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 14
+
+      # The harness records a per-check report and exits non-zero when any check
+      # failed. Refuse to let a red run look green after artifacts are uploaded.
+      - name: Propagate the harness exit status
+        if: steps.harness.outcome != 'success'
+        run: |
+          echo "::error title=WireGuard harness failed::See the wireguard-test-report-${{ matrix.os }} artifact for the per-check report."
+          exit 1
