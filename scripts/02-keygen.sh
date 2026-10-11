@@ -33,6 +33,22 @@ main() {
   srv_pub="$(wg_pubkey_of "$srv_priv")"
   cli_pub="$(wg_pubkey_of "$cli_priv")"
 
+  # A manifest of SHA-256 digests of the secrets. Digests are one-way, so this
+  # file is safe to publish, and it lets the leak audit prove provenance even
+  # after 09-cleanup.sh has deleted the keys themselves - which is exactly the
+  # order the suite runs in.
+  ( umask 022
+    : >"${WG_ARTIFACT_DIR}/secret-hashes.txt"
+    for f in server.key client.key preshared.key; do
+      [[ -f "${KEYS_DIR}/${f}" ]] || continue
+      # The file holds a 44-character key plus no trailing newline in some
+      # builds; tr strips any whitespace before hashing so the digest matches
+      # what the scanner computes over a token it finds in a file.
+      digest="$(tr -d '\r\n' <"${KEYS_DIR}/${f}" | sha256sum | awk '{print $1}')"
+      printf '%s\n' "$digest" >>"${WG_ARTIFACT_DIR}/secret-hashes.txt"
+    done
+  ) || true
+
   # Public keys are safe to record.
   {
     printf 'server_public_key=%s\n' "$srv_pub"

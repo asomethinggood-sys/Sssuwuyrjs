@@ -242,8 +242,11 @@ wg_setup_nat() {
 # the protocol: no artifact carries a bare key token, so that the leak audit can
 # treat any unlabelled key-shaped string as suspicious and still stay quiet.
 wg_redact_leading_key() {
+  # Deliberately not using a {42} interval: mawk 1.3.4, which is /usr/bin/awk on
+  # Debian and Ubuntu, does not support interval expressions, so the regex would
+  # silently match nothing and the redaction would quietly do no work at all.
   awk -F'\t' 'BEGIN { OFS="\t" }
-    $1 ~ /^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$/ { $1 = "<peer-public-key>" }
+    length($1) == 44 && substr($1, 44) == "=" && $1 ~ /^[A-Za-z0-9+]+\/[A-Za-z0-9+]*[AEIMQUYcgkosw048]=$/ { $1 = "<peer-public-key>" }
     { print }'
 }
 

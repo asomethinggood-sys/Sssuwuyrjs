@@ -5,10 +5,13 @@ A naive "looks like a 44-character base64 key" scan produces false positives,
 because **public** keys have exactly the same shape as private keys. This
 scanner therefore works in two passes:
 
-1. Provenance pass (strongest): if ``--secrets-from DIR`` names the directory
-   where the harness stores the keys it generated, every value found there is a
-   known secret and any verbatim occurrence anywhere in the scanned tree is a
-   leak. This has no heuristic component at all.
+1. Provenance pass (strongest). Two sources, both free of heuristics:
+   ``--secrets-from DIR`` treats every value in a directory of generated keys as
+   a secret, and ``--secret-hashes FILE`` treats a key-shaped token as a secret
+   when its SHA-256 appears in a manifest of digests. The hash form exists
+   because the harness deliberately deletes its key directory before the final
+   leak audit runs, so the audit has to be able to prove provenance from
+   something that is not itself a secret.
 2. Heuristic pass: it collects every key token that is *provably public* — the
    value of a ``PublicKey =`` / ``public_key=`` assignment, a key rendered after
    ``peer:`` by ``wg show``, and similar tool output. Anything key-shaped that is
@@ -24,6 +27,7 @@ Exit codes: 0 clean, 1 leak found, 2 usage error.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import sys
@@ -79,6 +83,27 @@ def iter_files(root: str, excludes: tuple[str, ...] = ()):
             yield path
 
 
+def load_secret_hashes(path: str) -> set[str]:
+    """Read a manifest of SHA-256 digests, one hex digest per line.
+
+    A digest is not a secret: it cannot be reversed, and publishing it proves
+    only that the scanner knew the key existed. That is what lets the audit keep
+    working after 09-cleanup.sh has removed the keys themselves.
+    """
+    digests: set[str] = set()
+    if not path or not os.path.isfile(path):
+        return digests
+    try:
+        lines = open(path, "r", encoding="utf-8").read().splitlines()
+    except OSError:
+        return digests
+    for line in lines:
+        token = line.strip().lower()
+        if len(token) == 64 and all(c in "0123456789abcdef" for c in token):
+            digests.add(token)
+    return digests
+
+
 def load_known_secrets(directory: str) -> list[bytes]:
     """Read every file under *directory* and treat its contents as a secret.
 
@@ -106,6 +131,7 @@ def scan(
     root: str,
     excludes: tuple[str, ...] = (),
     known_secrets: tuple[bytes, ...] = (),
+    secret_hashes: frozenset[str] = frozenset(),
 ) -> list[tuple[str, int, bytes]]:
     findings: list[tuple[str, int, bytes]] = []
 
@@ -147,7 +173,14 @@ def scan(
             # remains on the same line.
             for match in KEY_TOKEN.finditer(line):
                 token = match.group(0)
-                if token in public_tokens or token in known_secrets:
+                if token in known_secrets:
+                    continue
+                if secret_hashes and hashlib.sha256(token).hexdigest() in secret_hashes:
+                    # Digests are checked before the public-key allowlist:
+                    # provenance outranks any label-based excuse.
+                    findings.append((path, lineno, token[:8] + b"..."))
+                    continue
+                if token in public_tokens:
                     continue
                 if PUBLIC_CONTEXT.search(line) and not SECRET_CONTEXT.search(line):
                     # Public key written in a line we could not attribute in pass 1.
@@ -165,16 +198,23 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--secrets-from", default=None, metavar="DIR",
                     help="directory holding generated keys; every value in it is "
                          "treated as a known secret (provenance pass)")
+    ap.add_argument("--secret-hashes", default=None, metavar="FILE",
+                    help="manifest of SHA-256 digests of known secrets; a "
+                         "key-shaped token whose digest matches is a leak, which "
+                         "keeps the provenance pass working after the key "
+                         "directory has been deleted")
     args = ap.parse_args(argv)
 
     leaks = 0
     excludes = tuple(args.exclude)
     known = tuple(load_known_secrets(args.secrets_from)) if args.secrets_from else ()
+    hashes = (frozenset(load_secret_hashes(args.secret_hashes))
+              if args.secret_hashes else frozenset())
     for root in args.paths:
         if not os.path.exists(root):
             continue
         seen: set[tuple[str, int, bytes]] = set()
-        for path, lineno, preview in scan(root, excludes, known):
+        for path, lineno, preview in scan(root, excludes, known, hashes):
             if (path, lineno, preview) in seen:
                 continue
             seen.add((path, lineno, preview))

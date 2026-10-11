@@ -332,6 +332,20 @@ expect_rc 1 "a mislabelled key is caught with --secrets-from" -- \
   python3 "$REPO_ROOT/scripts/secret_scan.py" "$WORK/partial" --secrets-from "$WORK/partial/keydir"
 rm -rf "$WORK/partial/keydir" "$WORK/partial/laundered.txt"
 
+# Hash-based provenance must beat the public-key allowlist: a key that is
+# *known* to be a secret cannot be whitelisted by a label.
+mkdir -p "$WORK/hashes"
+python3 -c "
+import hashlib, sys
+print(hashlib.sha256(sys.argv[1].encode()).hexdigest())
+" "$PRIV" >"$WORK/priv.sha256"
+printf 'public_key = %s\n' "$PRIV" >"$WORK/laundered2.txt"
+expect_rc 0 "a digest manifest is not itself a leak" -- \
+  python3 "$REPO_ROOT/scripts/secret_scan.py" "$WORK/priv.sha256"
+expect_rc 1 "hash provenance catches a key the label pass would allow" -- \
+  python3 "$REPO_ROOT/scripts/secret_scan.py" "$WORK/laundered2.txt" --secret-hashes "$WORK/priv.sha256"
+rm -rf "$WORK/hashes" "$WORK/priv.sha256" "$WORK/laundered2.txt"
+
 # The heuristic must not accept the bare word "public" as evidence.
 mkdir -p "$WORK/prose"
 printf 'The public key of the peer is not this: %s\n' "$PRIV" >"$WORK/prose/prose.txt"

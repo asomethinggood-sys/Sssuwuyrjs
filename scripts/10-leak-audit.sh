@@ -23,11 +23,18 @@ audit_path() {
   [[ -n "$exclude" ]] && extra+=(--exclude "$exclude")
   # Provenance pass: the harness knows exactly which keys it generated, so a
   # verbatim copy of one of them is a leak no heuristic can explain away.
-  [[ -d "${WG_STATE_DIR}/keys" ]] && extra+=(--secrets-from "${WG_STATE_DIR}/keys")
+  if [[ -d "${WG_STATE_DIR}/keys" ]]; then
+    extra+=(--secrets-from "${WG_STATE_DIR}/keys")
+  fi
+  if [[ -f "${WG_ARTIFACT_DIR}/secret-hashes.txt" ]]; then
+    extra+=(--secret-hashes "${WG_ARTIFACT_DIR}/secret-hashes.txt")
+  fi
   local scan_out scan_rc=0
   scan_out="$(python3 "${SCRIPT_DIR}/secret_scan.py" "$path" "${extra[@]+"${extra[@]}"}" 2>&1)" || scan_rc=$?
   if (( scan_rc == 0 )); then
-    wg_check "$check_id" PASS "Secret scan: $label" "no private/preshared key material detected"
+    local mode="heuristic only"
+    (( ${#extra[@]} > 0 )) && mode="heuristic + provenance"
+    wg_check "$check_id" PASS "Secret scan: $label" "no private/preshared key material detected ($mode)"
     return 0
   fi
   # The detail is what a reader sees on the check run when the job log is not
