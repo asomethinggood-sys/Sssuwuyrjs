@@ -16,10 +16,6 @@ DIAG_DIR="${WG_ARTIFACT_DIR}/diagnostics"
 WWW_DIR="${WG_STATE_DIR}/www"
 ns() { ip netns exec "$@"; }
 
-wan_iface() {
-  ip route get 1.1.1.1 2>/dev/null | grep -oE 'dev [^ ]+' | awk '{print $2}' | head -1
-}
-
 start_http_server() {
   install -d -m 0755 "$WWW_DIR"
   printf 'ok\n' >"${WWW_DIR}/health.txt"
@@ -42,23 +38,6 @@ PY
   setsid ip netns exec "$WG_SRV_NS" python3 "${WG_STATE_DIR}/udp_echo.py" "$WG_TUNNEL_SRV_IP" 9999 \
       >>"${DIAG_DIR}/udp-echo.log" 2>&1 &
   sleep 1
-}
-
-setup_nat() {
-  local wan="$1"
-  # Root namespace: forward and masquerade bridged test traffic.
-  sysctl -qw net.ipv4.ip_forward=1
-  iptables -t nat -C POSTROUTING -s "${WG_BRIDGE_IP}/${WG_TRANSPORT_CIDR}" -o "$wan" -j MASQUERADE 2>/dev/null \
-    || iptables -t nat -A POSTROUTING -s "${WG_BRIDGE_IP}/${WG_TRANSPORT_CIDR}" -o "$wan" -j MASQUERADE
-  iptables -C FORWARD -i br-wg -o "$wan" -j ACCEPT 2>/dev/null || iptables -A FORWARD -i br-wg -o "$wan" -j ACCEPT
-
-  # Server namespace: forward client traffic and masquerade it toward the bridge.
-  ns "$WG_SRV_NS" sysctl -qw net.ipv4.ip_forward=1
-  ns "$WG_SRV_NS" ip route replace default via "$WG_BRIDGE_IP" dev "$WG_VETH_SRV"
-  ns "$WG_SRV_NS" iptables -t nat -C POSTROUTING -s "${WG_TUNNEL_SRV_IP%/*}/${WG_TUNNEL_CIDR}" \
-      -o "$WG_VETH_SRV" -j MASQUERADE 2>/dev/null \
-    || ns "$WG_SRV_NS" iptables -t nat -A POSTROUTING -s "${WG_TUNNEL_SRV_IP%/*}/${WG_TUNNEL_CIDR}" \
-      -o "$WG_VETH_SRV" -j MASQUERADE
 }
 
 main() {
@@ -108,14 +87,14 @@ PY
 
   # --- CON-04: real internet egress through the tunnel --------------------
   local wan
-  wan="$(wan_iface)"
-  if ! command -v iptables >/dev/null 2>&1; then
+  wan="$(wg_wan_iface)"
+  if ! wg_have iptables; then
     wg_check "CON-04" UNTESTED "Internet egress through the tunnel (NAT on server role)" \
       "iptables is not installed on this host, so NAT/forwarding could not be configured"
   elif [[ -z "$wan" ]]; then
     wg_check "CON-04" UNTESTED "Internet egress through the tunnel" "could not determine the WAN interface"
   else
-    setup_nat "$wan"
+    wg_setup_nat
     local egress_out egress_rc=0
     egress_out="$(ns "$WG_CLI_NS" curl -fsS --max-time 15 https://api.github.com/zen 2>&1)" || egress_rc=$?
     if (( egress_rc == 0 )) && [[ -n "$egress_out" ]]; then

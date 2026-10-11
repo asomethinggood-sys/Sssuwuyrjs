@@ -44,6 +44,7 @@ remove_firewall_rules() {
   if [[ -n "$wan" ]]; then
     iptables -t nat -D POSTROUTING -s "${WG_BRIDGE_IP}/${WG_TRANSPORT_CIDR}" -o "$wan" -j MASQUERADE 2>/dev/null || true
     iptables -D FORWARD -i br-wg -o "$wan" -j ACCEPT 2>/dev/null || true
+    iptables -D FORWARD -i "$wan" -o br-wg -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
   fi
 }
 

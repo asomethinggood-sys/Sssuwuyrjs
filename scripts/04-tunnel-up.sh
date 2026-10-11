@@ -151,6 +151,10 @@ main() {
   teardown_topology
   build_transport
   build_tunnel
+  # Configure forwarding/NAT before the DNS step: the test resolver forwards
+  # unknown names upstream, which requires the server namespace to have a route
+  # to the internet.
+  wg_setup_nat || true
   collect_diagnostics
 
   if start_dns_server; then
@@ -181,6 +185,16 @@ main() {
   else
     wg_check "TUN-04" FAIL "Kernel accepted the peer configuration" "cli=$cli_peers srv=$srv_peers"
     exit 1
+  fi
+
+  if wg_have iptables; then
+    if ip netns exec "$WG_SRV_NS" iptables -t nat -S POSTROUTING 2>/dev/null | grep -q MASQUERADE; then
+      wg_check "TUN-06" PASS "Forwarding and NAT configured for the server role" "MASQUERADE present in netns ${WG_SRV_NS}"
+    else
+      wg_check "TUN-06" FAIL "Forwarding and NAT configured for the server role" "no MASQUERADE rule"
+    fi
+  else
+    wg_check "TUN-06" UNTESTED "Forwarding and NAT configured for the server role" "iptables is not installed"
   fi
 
   if command -v ss >/dev/null 2>&1; then

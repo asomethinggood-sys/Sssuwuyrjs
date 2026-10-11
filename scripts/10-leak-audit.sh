@@ -17,9 +17,14 @@ source "${SCRIPT_DIR}/lib/common.sh"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 audit_path() {
-  local label="$1" path="$2" check_id="$3"
+  local label="$1" path="$2" check_id="$3" exclude="${4:-}"
   [[ -e "$path" ]] || { wg_check "$check_id" SKIP "Secret scan: $label" "path does not exist"; return 0; }
-  if python3 "${SCRIPT_DIR}/secret_scan.py" "$path"; then
+  local extra=()
+  [[ -n "$exclude" ]] && extra+=(--exclude "$exclude")
+  # Provenance pass: the harness knows exactly which keys it generated, so a
+  # verbatim copy of one of them is a leak no heuristic can explain away.
+  [[ -d "${WG_STATE_DIR}/keys" ]] && extra+=(--secrets-from "${WG_STATE_DIR}/keys")
+  if python3 "${SCRIPT_DIR}/secret_scan.py" "$path" "${extra[@]+"${extra[@]}"}"; then
     wg_check "$check_id" PASS "Secret scan: $label" "no private/preshared key material detected"
   else
     wg_check "$check_id" FAIL "Secret scan: $label" "secret material detected - see errors above"
@@ -32,8 +37,9 @@ main() {
   wg_step "audit: secret-leak scan"
   local rc=0
 
-  # Only tracked/scanned source; .git internals and node_modules are irrelevant.
-  audit_path "working tree" "$REPO_ROOT" "SEC-01" || rc=1
+  # SEC-01 answers "what would a commit publish?" - so the artifact tree, which
+  # is covered separately by SEC-02, is excluded rather than scanned twice.
+  audit_path "working tree" "$REPO_ROOT" "SEC-01" "$WG_ARTIFACT_DIR" || rc=1
   audit_path "workflow artifacts" "$WG_ARTIFACT_DIR" "SEC-02" || rc=1
 
   if [[ -n "${GITHUB_STEP_SUMMARY:-}" && -f "${GITHUB_STEP_SUMMARY}" ]]; then

@@ -193,6 +193,50 @@ wg_pubkey_of() {
   wg pubkey <"$priv"
 }
 
+# Redact key material from `wg show <iface> dump` output.
+#   interface line: private_key <TAB> public_key <TAB> listen_port <TAB> fwmark
+#   peer line:      public_key  <TAB> preshared_key <TAB> endpoint <TAB> ...
+# A column-0 sed is not sufficient here: the preshared key is the *second*
+# field of a peer line, which is exactly the mistake this helper exists to
+# prevent.
+wg_redact_dump() {
+  awk -F'\t' 'BEGIN { OFS="\t" }
+    NF == 4 { $1 = "<redacted-private-key>"; print; next }
+    NF >= 8 { $1 = "<redacted-peer-public-key>"; $2 = "<redacted-preshared-key>"; print; next }
+    { print }'
+}
+
+# The egress interface of the host, used for MASQUERADE rules in the tests.
+wg_wan_iface() {
+  ip route get 1.1.1.1 2>/dev/null | grep -oE 'dev [^ ]+' | awk '{print $2}' | head -1
+}
+
+# Enable forwarding + NAT so the "server" namespace can act as an exit node
+# for the "client" namespace. Idempotent: -C probes before every -A so repeated
+# calls are safe, and 09-cleanup.sh removes each rule by exact match.
+wg_setup_nat() {
+  wg_have iptables || { wg_warn "iptables unavailable; NAT/egress tests will be UNTESTED"; return 1; }
+  local wan
+  wan="$(wg_wan_iface)"
+  [[ -n "$wan" ]] || { wg_warn "could not determine the WAN interface"; return 1; }
+
+  sysctl -qw net.ipv4.ip_forward=1
+  iptables -t nat -C POSTROUTING -s "${WG_BRIDGE_IP}/${WG_TRANSPORT_CIDR}" -o "$wan" -j MASQUERADE 2>/dev/null \
+    || iptables -t nat -A POSTROUTING -s "${WG_BRIDGE_IP}/${WG_TRANSPORT_CIDR}" -o "$wan" -j MASQUERADE
+  iptables -C FORWARD -i br-wg -o "$wan" -j ACCEPT 2>/dev/null \
+    || iptables -A FORWARD -i br-wg -o "$wan" -j ACCEPT
+  iptables -C FORWARD -i "$wan" -o br-wg -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null \
+    || iptables -A FORWARD -i "$wan" -o br-wg -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
+  ip netns exec "$WG_SRV_NS" sysctl -qw net.ipv4.ip_forward=1
+  ip netns exec "$WG_SRV_NS" ip route replace default via "$WG_BRIDGE_IP" dev "$WG_VETH_SRV"
+  ip netns exec "$WG_SRV_NS" iptables -t nat -C POSTROUTING -s "${WG_TUNNEL_SRV_IP}/${WG_TUNNEL_CIDR}" \
+      -o "$WG_VETH_SRV" -j MASQUERADE 2>/dev/null \
+    || ip netns exec "$WG_SRV_NS" iptables -t nat -A POSTROUTING -s "${WG_TUNNEL_SRV_IP}/${WG_TUNNEL_CIDR}" \
+      -o "$WG_VETH_SRV" -j MASQUERADE
+  wg_log "NAT/forwarding enabled (WAN=$wan) so egress tests can run"
+}
+
 # Assert a path contains no WireGuard secret material.
 #
 # Uses scripts/secret_scan.py, which distinguishes public keys (not secrets)

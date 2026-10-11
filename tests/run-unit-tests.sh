@@ -60,8 +60,11 @@ if command -v wg >/dev/null 2>&1; then
   KEY_A="$(wg genkey)"
   KEY_B="$(wg genkey)"
 else
-  KEY_A="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-  KEY_B="EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE="
+  # Built at runtime: a literal key-shaped string in a test file trips the
+  # repository's own secret scanner, and reviewers should not have to reason
+  # about whether a hardcoded key is real.
+  KEY_A="$(python3 -c "print('A' * 42 + 'A=')")"
+  KEY_B="$(python3 -c "print('E' * 42 + 'E=')")"
 fi
 
 cat >"$VALID_SERVER" <<EOF
@@ -147,9 +150,9 @@ if command -v wg >/dev/null 2>&1; then
   PSK="$(wg genpsk)"
 else
   # Same shape as a real key so the scanner's regex is still exercised.
-  PRIV="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-  PUB="EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE="
-  PSK="IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII="
+  PRIV="$(python3 -c "print('A' * 42 + 'A=')")"
+  PUB="$(python3 -c "print('E' * 42 + 'E=')")"
+  PSK="$(python3 -c "print('I' * 42 + 'I=')")"
 fi
 
 printf 'server_public_key=%s\nclient_public_key=%s\n' "$PUB" "$PUB" >"$SCAN/public-keys.txt"
@@ -260,6 +263,86 @@ assert rcode == 3, f"expected NXDOMAIN without an upstream, got rcode={rcode}"
 print("  ok   NXDOMAIN when no upstream and no authoritative data")
 PY
 if (( $? == 0 )); then PASS=$(( PASS + 3 )); else FAIL=$(( FAIL + 1 )); fi
+
+# ---------------------------------------------------------------------------
+section "wg dump redaction"
+# ---------------------------------------------------------------------------
+# Regression test for a real leak: a wg(8) dump carries the private key in
+# field 1 and the preshared key in field 2 of every peer line. A column-0 sed
+# masks the first and silently leaves the second.
+DUMP_LINE_1=$'PRIVATEKEYPLACEHOLDER\tPUBLICKEYPLACEHOLDER\t51820\toff'
+DUMP_LINE_2=$'PEERPUBKEYPLACEHOLDER\tPSKPLACEHOLDER\t192.0.2.1:51820\t0.0.0.0/0\t1\t2\t3\t25'
+REDACTED="$(printf '%s\n%s\n' "$DUMP_LINE_1" "$DUMP_LINE_2" \
+  | bash -c 'source "'"$REPO_ROOT"'/scripts/lib/common.sh"; wg_redact_dump')"
+if printf '%s' "$REDACTED" | grep -q 'PSKPLACEHOLDER'; then
+  not_ok "preshared key field is redacted from a wg dump"
+else
+  ok "preshared key field is redacted from a wg dump"
+fi
+if printf '%s' "$REDACTED" | grep -q 'PRIVATEKEYPLACEHOLDER'; then
+  not_ok "private key field is redacted from a wg dump"
+else
+  ok "private key field is redacted from a wg dump"
+fi
+if printf '%s\n' "$REDACTED" | grep -q '0.0.0.0/0'; then
+  ok "non-secret dump columns are preserved"
+else
+  not_ok "non-secret dump columns are preserved"
+fi
+
+# A partially redacted line must still be scanned: the old scanner skipped any
+# line containing "<redacted>", which hid whatever survived on that line.
+mkdir -p "$WORK/partial"
+if command -v wg >/dev/null 2>&1; then PARTIAL_PSK="$(wg genpsk)"; else
+  PARTIAL_PSK="$(python3 -c "print('M' * 42 + 'M=')")"
+fi
+printf '<redacted>\t%s\tsetting\n' "$PARTIAL_PSK" >"$WORK/partial/dump.txt"
+expect_rc 1 "a secret on a partially redacted line is still detected" -- \
+  python3 "$REPO_ROOT/scripts/secret_scan.py" "$WORK/partial"
+
+# A peer public key rendered by wg(8) as "peer: <key>" is not a secret.
+printf 'peer: %s\n' "$PUB" >"$WORK/partial/peer.txt"
+rm "$WORK/partial/dump.txt"
+expect_rc 0 "a peer public key from wg show is not a secret" -- \
+  python3 "$REPO_ROOT/scripts/secret_scan.py" "$WORK/partial"
+
+# `wg show` (no `dump`) spells the label "public key:", config files spell it
+# "PublicKey =". Both must be recognised, otherwise every public key in a
+# diagnostic dump is reported as a leak and the audit becomes useless noise.
+printf '  public key: %s\n' "$PUB" >"$WORK/shapes.txt"
+printf 'PublicKey = %s\n' "$PUB" >>"$WORK/shapes.txt"
+printf 'public_key = %s\n' "$PUB" >>"$WORK/shapes.txt"
+printf 'peer: %s\n' "$PUB" >>"$WORK/shapes.txt"
+expect_rc 0 "public-key spellings used by wg and wg-quick are all recognised" -- \
+  python3 "$REPO_ROOT/scripts/secret_scan.py" "$WORK/shapes.txt"
+# ...but a line that calls the same token a private key must still be flagged.
+printf '  private key: %s\n' "$PRIV" >>"$WORK/shapes.txt"
+expect_rc 1 "a 'private key:' line is a secret even after public-key lines" -- \
+  python3 "$REPO_ROOT/scripts/secret_scan.py" "$WORK/shapes.txt"
+rm -f "$WORK/shapes.txt"
+
+# A token that the heuristic pass would treat as public must still be caught
+# when it is a *known* secret (provenance beats heuristic).
+mkdir -p "$WORK/partial/keydir"
+printf '%s' "$PRIV" >"$WORK/partial/keydir/private.key"
+printf 'public_key = %s\n' "$PRIV" >"$WORK/partial/laundered.txt"
+expect_rc 0 "a mislabelled key is not caught without provenance" -- \
+  python3 "$REPO_ROOT/scripts/secret_scan.py" "$WORK/partial"
+expect_rc 1 "a mislabelled key is caught with --secrets-from" -- \
+  python3 "$REPO_ROOT/scripts/secret_scan.py" "$WORK/partial" --secrets-from "$WORK/partial/keydir"
+rm -rf "$WORK/partial/keydir" "$WORK/partial/laundered.txt"
+
+# The heuristic must not accept the bare word "public" as evidence.
+mkdir -p "$WORK/prose"
+printf 'The public key of the peer is not this: %s\n' "$PRIV" >"$WORK/prose/prose.txt"
+expect_rc 1 "prose mentioning a public key does not whitelist a token" -- \
+  python3 "$REPO_ROOT/scripts/secret_scan.py" "$WORK/prose"
+rm -rf "$WORK/prose"
+
+# --exclude must let a caller skip a subtree.
+printf 'PrivateKey = %s\n' "$PRIV" >"$WORK/partial/skip-me.conf"
+expect_rc 0 "--exclude skips the named subtree" -- \
+  python3 "$REPO_ROOT/scripts/secret_scan.py" "$WORK/partial" --exclude "$WORK/partial/skip-me.conf"
 
 # ---------------------------------------------------------------------------
 section "templates"

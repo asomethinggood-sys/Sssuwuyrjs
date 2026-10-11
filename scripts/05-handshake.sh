@@ -79,11 +79,10 @@ main() {
 
   # Keeping the same session key across pokes is the expected "roamed/stable"
   # state; a *new* handshake after the rekey interval is also normal.
-  ns "$WG_CLI_NS" wg show wg0 dump >"${DIAG_DIR}/wg-client-dump.txt"
-  ns "$WG_SRV_NS" wg show wg0 dump >"${DIAG_DIR}/wg-server-dump.txt"
-  # Redact the key column of the dump before it can reach an artifact.
-  sed -E 's/^([A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=)/<redacted>/' -i \
-    "${DIAG_DIR}/wg-client-dump.txt" "${DIAG_DIR}/wg-server-dump.txt"
+  # Dumps go through the redactor on the way to disk: they contain the private
+  # key (field 1) and the preshared key (field 2 of every peer line).
+  ns "$WG_CLI_NS" wg show wg0 dump | wg_redact_dump >"${DIAG_DIR}/wg-client-dump.txt"
+  ns "$WG_SRV_NS" wg show wg0 dump | wg_redact_dump >"${DIAG_DIR}/wg-server-dump.txt"
   wg_check "HS-04" PASS "Handshake state captured for audit" "diagnostics/wg-*-dump.txt (key column redacted)"
 }
 
