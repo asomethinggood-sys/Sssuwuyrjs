@@ -11,17 +11,21 @@ value was read from the kernel**.
 
 | Run | Where | When (UTC) | Result |
 |---|---|---|---|
-| CI harness, `ubuntu-24.04` | GitHub-hosted runner, kernel `6.17.0-1022-azure`, image `ubuntu24-20261004.327.1` | 2026-10-11 12:04:51 – 12:05:45 | **PASS 58, FAIL 0, UNTESTED 0, SKIP 0** |
-| CI harness, `ubuntu-22.04` | GitHub-hosted runner, kernel `6.8.0-1064-azure`, image `ubuntu22-20261004.315.1` | 2026-10-11 12:04:50 – 12:05:48 | **PASS 58, FAIL 0, UNTESTED 0, SKIP 0** |
+| CI harness, `ubuntu-24.04` | GitHub-hosted runner, kernel `6.17.0-1022-azure`, image `ubuntu24-20261004.327.1` | 2026-10-11 12:07:05 – 12:07:59 | **PASS 58, FAIL 0, UNTESTED 0, SKIP 0** |
+| CI harness, `ubuntu-22.04` | GitHub-hosted runner, kernel `6.8.0-1064-azure`, image `ubuntu22-20261004.315.1` | 2026-10-11 12:07:04 – 12:08:01 | **PASS 58, FAIL 0, UNTESTED 0, SKIP 0** |
 | Static analysis | GitHub-hosted runner | 2026-10-11 12:02 | success (ShellCheck, `compileall` + AST, yamllint, 47 unit tests, 10 workflow policy tests) |
 | Local harness | Development sandbox, kernel `6.1.158+`, 2 CPUs | 2026-10-11 11:56 | PASS 51, FAIL 1, UNTESTED 5, SKIP 1 — the single FAIL and all five UNTESTED cases are sandbox limitations, itemised in §5 |
 
-Workflow runs: *WireGuard validation* `38137908799`, *WireGuard static analysis*
-`38137908756`, both on commit `c48b56e`. Evidence is reproduced from the check-run
-annotations of that run and from `artifacts/checks.ndjson` in the job artifacts. Every
-commit from `2bd00ff` onward has produced the same 58 PASS on both legs
-(`38137396217` on `2bd00ff`, `38137734106` on `1f1b180`), so this is a reproduced
-result and not a lucky run.
+Workflow runs: *WireGuard validation* `38138051860`, *WireGuard static analysis*
+`38138051880`, both on commit `0eb9a1a`. Evidence is reproduced from the check-run
+annotations of that run and from `artifacts/checks.ndjson` in the job artifacts.
+
+This is a reproduced result, not a lucky run. **Every commit from `2bd00ff`
+(2026-10-11 11:56 UTC) through `0eb9a1a` (2026-10-11 12:08 UTC) produced 58 PASS and
+0 FAIL on both matrix legs**, including the documentation-only commits that followed
+the last code change: `38137396217` on `2bd00ff`, `38137544729` on `ac3084a`,
+`38137734106` on `1f1b180`, `38137908799` on `c48b56e`, and `38138051860` on
+`0eb9a1a`.
 
 Early CI runs failed and were the most valuable runs of the project — §4 lists what
 they caught.
@@ -49,8 +53,8 @@ The central claim of this project is that the configuration and data path work. 
 observation behind it, copied verbatim from the check record:
 
 ```
-HS-01  latest-handshakes=1791720307 (2026-10-11T12:05:07Z), waited 0s     [ubuntu-24.04]
-HS-01  latest-handshakes=1791720306 (2026-10-11T12:05:06Z), waited 0s     [ubuntu-22.04]
+HS-01  latest-handshakes=1791720438 (2026-10-11T12:07:18Z), waited 0s     [ubuntu-24.04]
+HS-01  latest-handshakes=1791720436 (2026-10-11T12:07:16Z), waited 0s     [ubuntu-22.04]
 HS-02  latest-handshakes=<same value read independently on the peer>
 HS-03  client rx=220B tx=308B         <- encrypted transport, not just negotiation
 ```
@@ -160,7 +164,7 @@ CON-01  3 packets transmitted, 3 received, 0% packet loss,
         rtt min/avg/max/mdev = 0.199/0.229/0.257/0.023 ms      <- ICMP inside the tunnel
 CON-02  echo server replied through wg0                        <- UDP round trip
 CON-03  GET /health.txt -> 200 ok                              <- TCP/HTTP
-CON-04  https://api.github.com/zen via wg0 -> "Keep it logically awesome."   [24.04]
+CON-04  https://api.github.com/zen via wg0 -> "Speak like a human."            [24.04]
 CON-04  https://api.github.com/zen via wg0 -> "Mind your words, they are
         important."                                                        [22.04]
 CON-05  payload 1392B carried (MTU 1420)                       <- DF bit set, no fragmentation
