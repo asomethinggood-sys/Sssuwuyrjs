@@ -103,7 +103,7 @@ main() {
   fail_out="$(timeout --kill-after=5s 10s ip netns exec "$WG_CLI_NS" ping -c 1 -W 3 "$WG_TUNNEL_SRV_IP" 2>&1)" || fail_rc=$?
   if (( fail_rc != 0 )); then
     wg_check "REC-03" PASS "Unreachable endpoint fails fast and cleanly" \
-      "ping over a dead endpoint returned rc=$fail_rc within the bounded timeout"
+      "ping over a dead endpoint returned rc=$fail_rc within the bounded timeout: $(printf '%s' "$fail_out" | tail -n 1)"
   else
     wg_check "REC-03" FAIL "Unreachable endpoint fails fast and cleanly" "traffic unexpectedly succeeded"
   fi

@@ -139,7 +139,7 @@ PY
   fi
   local size=$(( mtu - 28 ))
   local df_out df_rc=0
-  df_out="$(ns "$WG_CLI_NS" ping -c 2 -W 3 -M do -s "$size" "$WG_TUNNEL_SRV_IP" 2>&1)" || df_rc=$?
+  df_out="$(ns "$WG_CLI_NS" ping -c 2 -W 3 -M 'do' -s "$size" "$WG_TUNNEL_SRV_IP" 2>&1)" || df_rc=$?
   if (( df_rc == 0 )); then
     wg_check "CON-05" PASS "Tunnel MTU verified with DF bit set" "payload ${size}B carried (MTU ${mtu})"
   else

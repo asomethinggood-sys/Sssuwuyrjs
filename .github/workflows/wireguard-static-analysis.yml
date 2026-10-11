@@ -36,7 +36,15 @@ jobs:
           # SC1091 (sourced file not followed) and SC2317 (unreachable code after
           # trap handlers) are noisy for this codebase; everything else is fatal.
           shellcheck --version
-          shellcheck --severity=warning --exclude=SC1091,SC2317 $files
+          rc=0
+          out=$(shellcheck --format=gcc --severity=warning --exclude=SC1091,SC2317 $files 2>&1) || rc=$?
+          if [[ -n "$out" ]]; then
+            printf '%s\n' "$out"
+            printf '%s\n' "$out" | head -50 | while IFS= read -r line; do
+              echo "::error title=ShellCheck::${line//%/}"
+            done
+          fi
+          exit "$rc"
 
       - name: Python syntax and import check
         run: |

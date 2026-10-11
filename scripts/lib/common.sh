@@ -63,7 +63,8 @@ WG_LOG_FILE="${WG_LOG_FILE:-}"
 
 _wg_emit() {
   local level="$1"; shift
-  local line="[$(_wg_ts)] [$level] $*"
+  local line
+  line="[$(_wg_ts)] [$level] $*"
   printf '%s\n' "$line" >&2
   if [[ -n "$WG_LOG_FILE" ]]; then
     mkdir -p "$(dirname "$WG_LOG_FILE")" 2>/dev/null || true

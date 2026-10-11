@@ -96,6 +96,35 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # Surface the per-check outcome on the commit/PR check run. GitHub renders
+      # these as annotations, so a reviewer sees exactly which check failed
+      # without downloading the artifact.
+      - name: Publish check results as annotations
+        if: always()
+        run: |
+          ndjson=artifacts/checks.ndjson
+          if [[ ! -f "$ndjson" ]]; then
+            echo "::warning title=No check log::The harness did not produce artifacts/checks.ndjson"
+            exit 0
+          fi
+
+          emit() {
+            local level="$1" filter="$2" label="$3"
+            jq -r "$filter | \(.id)\t\(.description)\t\(.detail // \"\")" "$ndjson" |
+              while IFS=$'\t' read -r id desc detail; do
+                [[ -n "$id" ]] || continue
+                clean=$(printf '%s -- %s' "$desc" "$detail" | tr '\n\r' '  ' | tr -d '%' | cut -c1-600)
+                echo "::${level} title=${id} ${label}::${clean}"
+              done
+          }
+
+          emit error 'select(.status=="FAIL")' "failed"
+          emit warning 'select(.status=="UNTESTED" or .status=="SKIP")' "did not execute"
+
+          echo "--- summary ---"
+          jq -r '"checks=\(.summary.total) pass=\(.summary.passed) fail=\(.summary.failed) skip=\(.summary.skipped) untested=\(.summary.untested)"' \
+            artifacts/test-report.json 2>/dev/null || echo "summary unavailable"
+
       # The harness records a per-check report and exits non-zero when any check
       # failed. Refuse to let a red run look green after artifacts are uploaded.
       - name: Propagate the harness exit status
