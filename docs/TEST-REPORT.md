@@ -11,21 +11,25 @@ value was read from the kernel**.
 
 | Run | Where | When (UTC) | Result |
 |---|---|---|---|
-| CI harness, `ubuntu-24.04` | GitHub-hosted runner, kernel `6.17.0-1022-azure`, image `ubuntu24-20261004.327.1` | 2026-10-11 11:47:46 – 11:49:00 | **PASS 57, FAIL 0, UNTESTED 0, SKIP 0** |
-| CI harness, `ubuntu-22.04` | GitHub-hosted runner, kernel `6.8.0-1064-azure`, image `ubuntu22-20261004.315.1` | 2026-10-11 11:47:47 – 11:49:03 | **PASS 57, FAIL 0, UNTESTED 0, SKIP 0** |
-| Static analysis | GitHub-hosted runner | 2026-10-11 11:47 | success (ShellCheck, `compileall` + AST, yamllint, 40 unit tests, 10 workflow policy tests) |
-| Local harness | Development sandbox, kernel `6.1.158+`, 2 CPUs | 2026-10-11 11:37 | PASS 50, FAIL 1, UNTESTED 5, SKIP 1 — the single FAIL and all five UNTESTED cases are sandbox limitations, itemised in §5 |
+| CI harness, `ubuntu-24.04` | GitHub-hosted runner, kernel `6.17.0-1022-azure`, image `ubuntu24-20261004.327.1` | 2026-10-11 11:56:29 – 11:57:42 | **PASS 58, FAIL 0, UNTESTED 0, SKIP 0** |
+| CI harness, `ubuntu-22.04` | GitHub-hosted runner, kernel `6.8.0-1064-azure`, image `ubuntu22-20261004.315.1` | 2026-10-11 11:56:29 – 11:57:46 | **PASS 58, FAIL 0, UNTESTED 0, SKIP 0** |
+| Static analysis | GitHub-hosted runner | 2026-10-11 11:56 | success (ShellCheck, `compileall` + AST, yamllint, 45 unit tests, 10 workflow policy tests) |
+| Local harness | Development sandbox, kernel `6.1.158+`, 2 CPUs | 2026-10-11 11:56 | PASS 51, FAIL 1, UNTESTED 5, SKIP 1 — the single FAIL and all five UNTESTED cases are sandbox limitations, itemised in §5 |
 
-Workflow runs: *WireGuard validation* `38136863775`, *WireGuard static analysis*
-`38136863797`, both on commit `4180e3c`. Evidence is reproduced from the check-run
+Workflow runs: *WireGuard validation* `38137396217`, *WireGuard static analysis*
+`38137396260`, both on commit `2bd00ff`. Evidence is reproduced from the check-run
 annotations of that run and from `artifacts/checks.ndjson` in the job artifacts.
+
+Early CI runs failed and were the most valuable runs of the project — §4 lists what
+they caught.
 
 ### Local unit tests
 
 ```
 $ bash tests/run-unit-tests.sh
-unit tests: 40 passed, 0 failed        # config validator, secret scanner, renderer,
-                                       # DNS helpers, wg-dump redaction
+unit tests: 45 passed, 0 failed        # config validator, secret scanner (both
+                                       # provenance modes), renderer, DNS helpers,
+                                       # wg output redaction, shipped template
 
 $ bash tests/check-workflows.sh
 workflow checks: 10 passed, 0 failed   # pinned SHAs, least privilege, no
@@ -41,9 +45,9 @@ The central claim of this project is that the configuration and data path work. 
 observation behind it, copied verbatim from the check record:
 
 ```
-HS-01  latest-handshakes=1791719286 (2026-10-11T11:48:06Z), waited 0s     [ubuntu-24.04]
-HS-01  latest-handshakes=1791719283 (2026-10-11T11:48:03Z), waited 0s     [ubuntu-22.04]
-HS-02  latest-handshakes=1791719286   <- read independently on the peer, same value
+HS-01  latest-handshakes=1791719802 (2026-10-11T11:56:42Z), waited 0s     [ubuntu-24.04]
+HS-01  latest-handshakes=1791719806 (2026-10-11T11:56:46Z), waited 0s     [ubuntu-22.04]
+HS-02  latest-handshakes=<same value read independently on the peer>
 HS-03  client rx=220B tx=308B         <- encrypted transport, not just negotiation
 ```
 
@@ -104,6 +108,7 @@ in the harness. `KEY-06` scans the whole run's output for key material.
 ```
 CFG-01  placeholders only                       <- templates contain no real values
 CFG-02  18 documented variables, all resolvable
+CFG-08  valid with --allow-placeholders, rejected as a live config
 CFG-03  server.conf + client.conf produced
 CFG-04  both files exist at the expected paths
 CFG-05  required keys, PSK, AllowedIPs, MTU validated
@@ -148,10 +153,11 @@ transport path to its own peer. `DNS-02` is the control that makes `DNS-01` mean
 
 ```
 CON-01  3 packets transmitted, 3 received, 0% packet loss,
-        rtt min/avg/max/mdev = 0.150/0.197/0.232/0.034 ms      <- ICMP inside the tunnel
+        rtt min/avg/max/mdev = 0.199/0.229/0.257/0.023 ms      <- ICMP inside the tunnel
 CON-02  echo server replied through wg0                        <- UDP round trip
 CON-03  GET /health.txt -> 200 ok                              <- TCP/HTTP
-CON-04  https://api.github.com/zen via wg0 -> "It's not fully shipped until it's fast."
+CON-04  https://api.github.com/zen via wg0 -> "Keep it logically awesome."   [24.04]
+CON-04  https://api.github.com/zen via wg0 -> "Encourage flow."              [22.04]
 CON-05  payload 1392B carried (MTU 1420)                       <- DF bit set, no fragmentation
 ```
 
@@ -189,9 +195,9 @@ CLN-01  no wgsrv/wgcli/wgctl namespaces remain
 CLN-02  root namespace is clean
 CLN-03  state directory /run/wg-harness removed
 CLN-04  no orphaned DNS/UDP/HTTP servers
-SEC-01  no private/preshared key material detected   (working tree)
-SEC-02  no private/preshared key material detected   (uploaded artifact tree)
-SEC-03  no private/preshared key material detected   (job summary)
+SEC-01  no private/preshared key material detected (heuristic + provenance)  (working tree)
+SEC-02  no private/preshared key material detected (heuristic + provenance)  (artifact tree)
+SEC-03  no private/preshared key material detected (heuristic + provenance)  (job summary)
 SEC-04  no secret variables exported
 SEC-05  no floating tags in workflow `uses:` lines
 ```
@@ -216,6 +222,8 @@ test report that only shows green is not a test report.
 | 5 | Annotation titles were truncated (`Recovery, cleanup and leaks` → `Recovery`) | A workflow-command title ends at the first comma | Commas escaped as `%2C` |
 | 6 | `PRE-02..05` had empty details | The probes were silent on success, so a passing check recorded nothing | Probes now print their own one-line proof |
 | 7 | `0% packet loss` rendered as `0 packet loss` in annotations | `%` was deleted instead of escaped (`%25`) | Escaping fixed |
+| 8 | `SEC-01` FAILed on CI while `SEC-02` passed on the same commit, and the check detail said only "secret material detected" | Two compounding problems. The audit's provenance pass never ran at all: `09-cleanup.sh` deletes the key directory *before* the audit, so `--secrets-from` was silently inert and only the weaker heuristic pass was ever executing. And the finding itself was written to a log rather than into the check, so it could not be read back | `02-keygen.sh` now writes a manifest of SHA-256 **digests** into the artifact tree; digests are one-way, so the manifest is safe to publish, and provenance survives key deletion. The check detail now carries the `LEAK` lines, and states which passes ran — "heuristic only" can no longer be mistaken for full coverage |
+| 9 | `wg_redact_leading_key` appeared to work but redacted nothing | `mawk 1.3.4`, the `/usr/bin/awk` on Debian and Ubuntu, does not implement `{n}` interval expressions, so `/^[A-Za-z0-9+/]{42}…/` matched nothing — silently. This is the same class of bug as #1: a redactor that fails open | Length- and character-based matching instead of intervals, and a unit test that feeds a real 44-character key through the redactor |
 
 ---
 

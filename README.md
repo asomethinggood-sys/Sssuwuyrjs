@@ -30,8 +30,8 @@ The short version of what this repository is:
 
 | Signal | Where it comes from | Result |
 |---|---|---|
-| Harness checks | `ubuntu-22.04` + `ubuntu-24.04` matrix, workflow *WireGuard validation* | **57 / 57 PASS** on both legs |
-| Unit tests | `bash tests/run-unit-tests.sh` | **40 passed, 0 failed** |
+| Harness checks | `ubuntu-22.04` + `ubuntu-24.04` matrix, workflow *WireGuard validation* | **58 / 58 PASS** on both legs |
+| Unit tests | `bash tests/run-unit-tests.sh` | **45 passed, 0 failed** |
 | Workflow policy tests | `bash tests/check-workflows.sh` | **10 passed, 0 failed** |
 | Static analysis | ShellCheck, `python -m compileall` + AST, `yamllint` | clean |
 
@@ -101,7 +101,7 @@ task's ten required test areas map onto it like this:
 |---|---|---|
 | 1 | Dependency installation | `DEP-00..03`, `PRE-01` |
 | 2 | Kernel and networking capabilities | `PRE-02..04`, `TUN-01..06` |
-| 3 | WireGuard configuration validity | `CFG-01..07` (validated *before* any service starts) |
+| 3 | WireGuard configuration validity | `CFG-01..08` (validated *before* any service starts) |
 | 4 | Key generation and secure storage | `KEY-01..06` |
 | 5 | Endpoint reachability | `PRE-05`, `PRE-06`, `TUN-05`, `REC-03` |
 | 6 | Handshake establishment | `HS-01..04` |
