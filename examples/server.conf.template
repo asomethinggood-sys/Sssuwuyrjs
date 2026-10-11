@@ -1,0 +1,39 @@
+# =============================================================================
+# WireGuard SERVER configuration TEMPLATE
+# =============================================================================
+# THIS IS A TEMPLATE, NOT A WORKING CONFIGURATION.
+# Every double-brace placeholder below must be replaced before the file is usable; the
+# renderer in scripts/render-config.sh performs the substitution and refuses to
+# emit a file that still contains placeholders.
+#
+#   `SERVER_PRIVATE_KEY`   output of `wg genkey` on the SERVER. Never share it.
+#   `SERVER_TUNNEL_IP`     server's address inside the tunnel, e.g. 10.13.13.1
+#   `TUNNEL_CIDR`          tunnel prefix length, e.g. 24
+#   `SERVER_LISTEN_PORT`   UDP port to listen on, e.g. 51820
+#   `TUNNEL_MTU`           tunnel MTU, e.g. 1420 (1380 on PPPoE/DS-Lite paths)
+#   `WAN_INTERFACE`        the server's outbound NIC, e.g. eth0 (from `ip route get 1.1.1.1`)
+#   `CLIENT_NAME`          label for the first client
+#   `CLIENT_PUBLIC_KEY`    output of `wg pubkey` on the CLIENT
+#   `PRESHARED_KEY`        output of `wg genpsk`; identical on both ends
+# =============================================================================
+
+[Interface]
+Address    = {{SERVER_TUNNEL_IP}}/{{TUNNEL_CIDR}}
+ListenPort = {{SERVER_LISTEN_PORT}}
+PrivateKey = {{SERVER_PRIVATE_KEY}}
+MTU        = {{TUNNEL_MTU}}
+
+# Route client traffic out to the internet. Remove these four lines for a
+# split-tunnel / site-to-site deployment that must not become an exit node.
+PostUp   = sysctl -w net.ipv4.ip_forward=1
+PostUp   = sysctl -w net.ipv6.conf.all.forwarding={{IPV6_FORWARDING}}
+PostUp   = iptables -A FORWARD -i %i -j ACCEPT
+PostUp   = iptables -t nat -A POSTROUTING -o {{WAN_INTERFACE}} -j MASQUERADE
+PostDown = iptables -D FORWARD -i %i -j ACCEPT
+PostDown = iptables -t nat -D POSTROUTING -o {{WAN_INTERFACE}} -j MASQUERADE
+
+[Peer]
+# {{CLIENT_NAME}}
+PublicKey    = {{CLIENT_PUBLIC_KEY}}
+PresharedKey = {{PRESHARED_KEY}}
+AllowedIPs   = {{CLIENT_TUNNEL_IP}}/32

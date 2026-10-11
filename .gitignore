@@ -1,0 +1,21 @@
+# Harness output: reports, logs, diagnostics, redacted configs.
+artifacts/
+
+# Anything that could carry a real key must never be committed.
+*.key
+*.conf
+!examples/*.template
+
+# Rendered client configurations (contain a private key).
+wg0.conf
+client.conf
+server.conf
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Editors / OS
+.DS_Store
+*.swp

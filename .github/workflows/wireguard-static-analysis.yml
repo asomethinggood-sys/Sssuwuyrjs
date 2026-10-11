@@ -1,0 +1,80 @@
+# Static analysis: lint, template validation and supply-chain checks.
+#
+# Runs without elevated privileges and without touching the network stack, so
+# it is fast enough to gate every pull request.
+name: WireGuard static analysis
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wireguard-static-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint and validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: ShellCheck every shell script
+        run: |
+          set -o pipefail
+          files=$(find scripts tests -type f -name '*.sh' | sort)
+          echo "checking:"; echo "$files"
+          # SC1091 (sourced file not followed) and SC2317 (unreachable code after
+          # trap handlers) are noisy for this codebase; everything else is fatal.
+          shellcheck --version
+          rc=0
+          out=$(shellcheck --format=gcc --severity=warning --exclude=SC1091,SC2317 $files 2>&1) || rc=$?
+          if [[ -n "$out" ]]; then
+            printf '%s\n' "$out"
+            printf '%s\n' "$out" | head -50 | while IFS= read -r line; do
+              echo "::error title=ShellCheck::${line//%/}"
+            done
+          fi
+          exit "$rc"
+
+      - name: Python syntax and import check
+        run: |
+          set -o pipefail
+          python3 -m compileall -q scripts tests
+          python3 - <<'PY'
+          import ast, pathlib, sys
+          bad = []
+          for path in sorted(pathlib.Path("scripts").rglob("*.py")):
+              try:
+                  ast.parse(path.read_text())
+              except SyntaxError as exc:
+                  bad.append(f"{path}: {exc}")
+          print("\n".join(bad) if bad else "python: OK")
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: Validate workflow YAML
+        run: |
+          set -o pipefail
+          pip install --quiet --disable-pip-version-check yamllint==1.35.1
+          yamllint -d '{extends: default, rules: {line-length: {max: 160}, truthy: {allowed-values: ["true","false","on","off"]}}}' \
+            .github/workflows/*.yml
+
+      - name: Unit tests
+        run: |
+          set -o pipefail
+          bash tests/run-unit-tests.sh
+
+      - name: Supply-chain checks (pinned actions, permissions, injection)
+        run: |
+          set -o pipefail
+          bash tests/check-workflows.sh

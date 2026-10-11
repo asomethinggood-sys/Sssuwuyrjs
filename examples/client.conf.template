@@ -1,0 +1,31 @@
+# =============================================================================
+# WireGuard CLIENT configuration TEMPLATE
+# =============================================================================
+# THIS IS A TEMPLATE, NOT A WORKING CONFIGURATION.
+# Replace every double-brace placeholder (scripts/render-config.sh does it for you) and
+# treat the result as a credential: it contains a private key.
+#
+#   `CLIENT_PRIVATE_KEY`          output of `wg genkey` on THIS client only
+#   `CLIENT_TUNNEL_IP`            this device's tunnel address, e.g. 10.13.13.2
+#   `TUNNEL_DNS`                  DNS resolver reachable inside the tunnel
+#   `TUNNEL_MTU`                  must be <= the server's MTU
+#   `SERVER_PUBLIC_KEY`           output of `wg pubkey` on the SERVER
+#   `PRESHARED_KEY`               output of `wg genpsk`; identical on both ends
+#   `SERVER_ENDPOINT_HOST`        reachable hostname or IP:port of the server
+#   `SERVER_ENDPOINT_PORT`        UDP port the server listens on
+#   `CLIENT_PERSISTENT_KEEPALIVE` 25 to keep a NAT mapping open, 0 to disable
+# =============================================================================
+
+[Interface]
+Address    = {{CLIENT_TUNNEL_IP}}/32
+PrivateKey = {{CLIENT_PRIVATE_KEY}}
+DNS        = {{TUNNEL_DNS}}
+MTU        = {{TUNNEL_MTU}}
+
+[Peer]
+PublicKey           = {{SERVER_PUBLIC_KEY}}
+PresharedKey        = {{PRESHARED_KEY}}
+Endpoint            = {{SERVER_ENDPOINT_HOST}}:{{SERVER_ENDPOINT_PORT}}
+# 0.0.0.0/0 = full tunnel. Use only the server's tunnel subnet for split tunnel.
+AllowedIPs          = {{CLIENT_ALLOWED_IPS}}
+PersistentKeepalive = {{CLIENT_PERSISTENT_KEEPALIVE}}

@@ -1,0 +1,192 @@
+# WireGuard harness - end-to-end validation on GitHub-hosted runners.
+#
+# SCOPE AND HONEST LIMITS (read docs/FEASIBILITY.md before changing this file)
+# ---------------------------------------------------------------------------
+# This workflow *tests* a WireGuard implementation. It does NOT operate a VPN
+# service and never exposes an endpoint to the internet. GitHub-hosted runners
+# are ephemeral VMs behind provider NAT with no inbound reachability and no
+# stable public address, so a runner can never be the server half of a VPN.
+# Using Actions as a hosted tunnel endpoint would also breach the GitHub Terms
+# for Additional Products and Features ("any other activity unrelated to the
+# production, testing, deployment, or publication of the software project
+# associated with the repository where GitHub Actions are used").
+#
+# What this workflow does instead: it builds a hermetic two-namespace testbed
+# on the runner, negotiates a real WireGuard handshake over real UDP, verifies
+# routing, DNS, ICMP/UDP/TCP and MTU behaviour, injects failures to prove the
+# recovery paths work, destroys all key material, and scans every publishable
+# surface for leaks.
+name: WireGuard validation
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      diagnostic_verbosity:
+        description: "Harness log verbosity"
+        type: choice
+        options: ["normal", "verbose"]
+        default: "normal"
+
+# Least privilege: nothing here needs to write to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: wireguard-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  harness:
+    name: Harness (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      # One leg per supported Ubuntu LTS: a kernel-specific regression (missing
+      # wireguard module, different netlink behaviour) must be caught, not assumed.
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    env:
+      WG_DEBUG: ${{ github.event.inputs.diagnostic_verbosity == 'verbose' && '1' || '0' }}
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Record runner facts
+        run: |
+          {
+            echo "runner_os=$RUNNER_OS"
+            echo "runner_arch=$RUNNER_ARCH"
+            echo "image=$ImageOS"
+            echo "image_version=$ImageVersion"
+            echo "kernel=$(uname -r)"
+            echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } | tee runner-facts.txt
+
+      - name: Run the WireGuard harness
+        id: harness
+        run: |
+          set -o pipefail
+          sudo -E env \
+            WG_ARTIFACT_DIR="$GITHUB_WORKSPACE/artifacts" \
+            WG_STATE_DIR=/run/wg-harness \
+            PATH="$PATH" \
+            bash scripts/run-suite.sh
+
+      # The harness runs as root; the artifact uploader does not.
+      - name: Normalise artifact ownership and permissions
+        if: always()
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" artifacts 2>/dev/null || true
+          chmod -R u+rwX,go+rX artifacts 2>/dev/null || true
+          mkdir -p artifacts && mv runner-facts.txt artifacts/ 2>/dev/null || true
+
+      - name: Upload the test report and diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: wireguard-test-report-${{ matrix.os }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Surface the per-check outcome on the commit/PR check run. GitHub renders
+      # these as annotations, so a reviewer sees exactly which check failed
+      # without downloading the artifact. Grouped into a handful of notices
+      # because GitHub throttles annotations per step.
+      #
+      # This is also the only machine-readable channel available when the job
+      # log and the artifact store are unreachable from the network you are
+      # reading the run from: `gh api .../check-runs/<id>/annotations` works.
+      - name: Publish check results as annotations
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import platform
+
+          ndjson = pathlib.Path("artifacts/checks.ndjson")
+          facts = pathlib.Path("artifacts/runner-facts.txt")
+          if facts.is_file():
+              flat = " ".join(
+                  line.replace("\n", "") for line in facts.read_text().splitlines()
+              )
+              print("::notice title=Runner::" + flat[:900])
+          else:
+              print("::notice title=Runner::facts file missing")
+
+          if not ndjson.is_file():
+              print("::warning title=No check log::The harness produced no artifacts/checks.ndjson")
+              raise SystemExit(0)
+
+          checks = [json.loads(line) for line in ndjson.read_text().splitlines() if line.strip()]
+          by_id = {c.get("id", "?"): c for c in checks}
+
+          def scrub(text):
+              # Workflow commands need % and CR/LF escaped, not deleted; dropping
+              # the percent sign silently turned "0% packet loss" into "0 packet
+              # loss" in the evidence digest.
+              return (str(text).replace("%", "%25")
+                      .replace("\r", " ").replace("\n", " ").strip())
+
+          def escape_title(text):
+              # A workflow-command title ends at the first comma, so an
+              # unescaped "Recovery, cleanup and leaks" is silently truncated
+              # to "Recovery".
+              return scrub(text).replace(",", "%2C").replace("=", "%3D")
+
+          def emit(level, rows, label, limit=900):
+              for check in rows:
+                  message = "{} -- {}".format(
+                      check.get("description", ""), check.get("detail", "")
+                  )
+                  print("::{} title={} {}::{}".format(
+                      level, check.get("id", "?"), label, scrub(message)[:limit]))
+
+          # Anything that did not pass is reported individually and prominently.
+          emit("error", [c for c in checks if c["status"] == "FAIL"], "failed")
+          emit("warning", [c for c in checks if c["status"] in ("UNTESTED", "SKIP")], "did not execute")
+
+          # Evidence digest: grouped so the annotation count stays small while
+          # every observed fact remains readable from the API.
+          groups = [
+              ("Platform", ("PRE-", "DEP-")),
+              ("Keys and configuration", ("KEY-", "CFG-")),
+              ("Tunnel and handshake", ("TUN-", "HS-")),
+              ("Routing and DNS", ("RT-", "DNS-")),
+              ("Connectivity", ("CON-",)),
+              ("Recovery, cleanup and leaks", ("REC-", "CLN-", "SEC-")),
+          ]
+          for title, prefixes in groups:
+              rows = [c for c in checks if c["status"] == "PASS"
+                      and c.get("id", "").startswith(prefixes)]
+              if not rows:
+                  continue
+              body = " | ".join(
+                  "{}: {}".format(c["id"], scrub(c.get("detail", "")))
+                  for c in sorted(rows, key=lambda c: c["id"])
+              )
+              print("::notice title={}::{}".format(
+                  escape_title(title), body[:4000] or "no passing checks"))
+
+          counts = {}
+          for check in checks:
+              counts[check["status"]] = counts.get(check["status"], 0) + 1
+          summary = " ".join("{}={}".format(k, counts[k]) for k in sorted(counts))
+          print("::notice title=Harness summary::{} ({} checks)".format(summary, len(checks)))
+          PY
+
+      # The harness records a per-check report and exits non-zero when any check
+      # failed. Refuse to let a red run look green after artifacts are uploaded.
+      - name: Propagate the harness exit status
+        if: steps.harness.outcome != 'success'
+        run: |
+          echo "::error title=WireGuard harness failed::See the wireguard-test-report-${{ matrix.os }} artifact for the per-check report."
+          exit 1
